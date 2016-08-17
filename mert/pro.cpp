@@ -37,11 +37,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include <utility>
 
 #include <boost/program_options.hpp>
+#include <boost/scoped_ptr.hpp>
 
+#include "ScorerFactory.h"
+#include "Scorer.h"
 #include "BleuScorer.h"
 #include "FeatureDataIterator.h"
 #include "ScoreDataIterator.h"
-#include "BleuScorer.h"
 #include "Util.h"
 #include "util/random.hh"
 
@@ -107,6 +109,8 @@ static void outputSample(ostream& out, const FeatureDataItem& f1, const FeatureD
 int main(int argc, char** argv)
 {
   bool help;
+  string scorer_type = "BLEU";
+  string scorer_config = "";
   vector<string> scoreFiles;
   vector<string> featureFiles;
   int seed;
@@ -121,6 +125,8 @@ int main(int argc, char** argv)
   po::options_description desc("Allowed options");
   desc.add_options()
   ("help,h", po::value(&help)->zero_tokens()->default_value(false), "Print this help message and exit")
+  ("sctype,st", po::value<string>(&scorer_type), "Scorer type (Default: BLEU)")
+  ("scconfig,sc", po::value<string>(&scorer_config), "Scorer config")
   ("scfile,S", po::value<vector<string> >(&scoreFiles), "Scorer data files")
   ("ffile,F", po::value<vector<string> > (&featureFiles), "Feature data files")
   ("random-seed,r", po::value<int>(&seed), "Seed for random number generation")
@@ -214,22 +220,33 @@ int main(int argc, char** argv)
     for(size_t  i=0; i<n_candidates; i++) {
       size_t rand1 = util::rand_excl(n_translations);
       pair<size_t,size_t> translation1 = hypotheses[rand1];
-      float bleu1 = smoothedSentenceBleu(scoreDataIters[translation1.first]->operator[](translation1.second), bleuSmoothing, smoothBP);
+      float score1, score2;
+      boost::scoped_ptr<Scorer> scorer(ScorerFactory::getScorer(scorer_type, scorer_config));
+      vector<ScoreStatsType> stats1(scoreDataIters[translation1.first]->operator[](translation1.second));
+      if(scorer_type == "BLEU") {
+        score1 = smoothedSentenceBleu(stats1, bleuSmoothing, smoothBP);
+      } else {
+        score1 = scorer->calculateScore(stats1);
+      }
 
       size_t rand2 = util::rand_excl(n_translations);
       pair<size_t,size_t> translation2 = hypotheses[rand2];
-      float bleu2 = smoothedSentenceBleu(scoreDataIters[translation2.first]->operator[](translation2.second), bleuSmoothing, smoothBP);
+      vector<ScoreStatsType> stats2(scoreDataIters[translation2.first]->operator[](translation2.second));
+      if(scorer_type == "BLEU") {
+        score2 = smoothedSentenceBleu(stats2, bleuSmoothing, smoothBP);
+      } else {
+        score2 = scorer->calculateScore(stats2);
+      }
 
-      /*
-      cerr << "t(" << translation1.first << "," << translation1.second << ") = " << bleu1 <<
+      cerr << "t(" << translation1.first << "," << translation1.second << ") = " << score1 <<
         " t(" << translation2.first << "," << translation2.second << ") = " <<
-          bleu2  << " diff = " << abs(bleu1-bleu2) << endl;
-      */
-      if (abs(bleu1-bleu2) < min_diff)
+          score2  << " diff = " << abs(score1-score2) << endl;
+
+      if (abs(score1-score2) < min_diff)
         continue;
 
-      samples.push_back(SampledPair(translation1, translation2, bleu1-bleu2));
-      scores.push_back(1.0-abs(bleu1-bleu2));
+      samples.push_back(SampledPair(translation1, translation2, score1-score2));
+      scores.push_back(1.0-abs(score1-score2));
     }
 
     float sample_threshold = -1.0;
